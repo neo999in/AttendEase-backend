@@ -45,11 +45,19 @@ app.post('/api/analyze-attendance', (req, res, next) => {
     const prompt = `
 You are an intelligent attendance analyzer. 
 I have attached a PDF report showing my attendance for my college classes (Date, Subject, A, P, or Cancelled).
-Analyze the report and precisely count the attended and total lectures for each explicit subject.
-Do NOT include "Cancelled" classes in the total lecture count.
 
-Return ONLY a raw, complete JSON object exactly matching this schema. Do not wrap it in markdown block quotes.
+1. Extract the student's metadata from the report header: full name, semester, program name, academic year, and the attendance report duration (start date, end date).
+2. Precisely count the attended and total lectures for each explicit subject.
+3. Do NOT include "Cancelled" classes in the total lecture count.
+
+Return ONLY a raw, complete JSON object exactly matching this schema:
 {
+  "studentName": "Full Name",
+  "semester": "Semester III",
+  "program": "B.Tech Computer Science",
+  "academicYear": "2025-2026",
+  "reportStartDate": "01 Jan 2025",
+  "reportEndDate": "30 Apr 2025",
   "subjects": [
     {
       "name": "Subject Name Here",
@@ -58,6 +66,8 @@ Return ONLY a raw, complete JSON object exactly matching this schema. Do not wra
     }
   ]
 }
+
+If a metadata field is not found in the report, set its value to an empty string "".
 `;
 
     const pdfPart = {
