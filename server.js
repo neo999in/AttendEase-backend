@@ -10,20 +10,34 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const upload = multer({
+const upload = multer({ 
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 5 * 1024 * 1024 }, 
+});
+
+// A quick health endpoint to wake up Render instances safely.
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'awake', timestamp: new Date() });
 });
 
 // -------------------- Attendance Analysis Endpoint --------------------
-app.post('/api/analyze-attendance', upload.single('report'), async (req, res) => {
+app.post('/api/analyze-attendance', (req, res, next) => {
+  // Catch Multer errors gracefully so we don't crash and break CORS
+  upload.single('report')(req, res, function (err) {
+    if (err) {
+      console.error("Multer Error:", err);
+      return res.status(400).json({ success: false, error: `File Upload Error: ${err.message}` });
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ error: 'No PDF file provided under the "report" field.' });
+      return res.status(400).json({ success: false, error: 'No PDF file provided under the "report" field.' });
     }
 
     if (req.file.mimetype !== 'application/pdf') {
-      return res.status(400).json({ error: 'Only PDF files are accepted.' });
+      return res.status(400).json({ success: false, error: 'Only PDF files are accepted.' });
     }
 
     console.log(`Received PDF: ${req.file.originalname} (${req.file.size} bytes)`);
@@ -47,10 +61,10 @@ Please format your ENTIRE response cleanly in Markdown.
       }
     };
 
-    // Call Gemini API via Axios (Using 1.5 Pro to properly read the PDF file)
+    // Note: The user manually updated this to use gemini-2.5-flash which is perfect.
     const response = await axios.post(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      {
+      { 
         contents: [
           {
             role: 'user',
@@ -69,8 +83,14 @@ Please format your ENTIRE response cleanly in Markdown.
     res.json({ success: true, insights });
   } catch (err) {
     console.error("Attendance Analysis Error:", err.response?.data || err.message);
-    res.status(500).json({ success: false, error: 'Failed to analyze attendance report.' });
+    res.status(500).json({ success: false, error: 'Failed to analyze attendance report. See backend logs.' });
   }
+});
+
+// Global Error Handler to guarantee JSON responses (ensures CORS works on crashes)
+app.use((err, req, res, next) => {
+  console.error("Critical Server Error:", err);
+  res.status(500).json({ success: false, error: `Critical server error: ${err.message}` });
 });
 
 const PORT = process.env.PORT || 3000;
