@@ -43,14 +43,24 @@ app.post('/api/analyze-attendance', (req, res, next) => {
     console.log(`Received PDF: ${req.file.originalname} (${req.file.size} bytes)`);
 
     const prompt = `
-You are an intelligent attendance analyzer. 
-I have attached a PDF report showing my attendance for my college classes (Date, Subject, A, P, or Cancelled).
+You are a precise attendance data extractor. Accuracy is critical — a student's academic standing depends on this.
 
-1. Extract the student's metadata from the report header: full name, semester, program name, academic year, and the attendance report duration (start date, end date).
-2. Precisely count the attended and total lectures for each explicit subject.
-3. Do NOT include "Cancelled" classes in the total lecture count.
+I have attached a college attendance PDF report. It contains rows with: Date, Subject, and a status column marked as one of:
+- "P" = Present (student attended)
+- "A" = Absent (student did NOT attend)
+- "Cancelled" = Class was cancelled (ignore completely)
 
-Return ONLY a raw, complete JSON object exactly matching this schema:
+STEP-BY-STEP INSTRUCTIONS:
+1. First, extract metadata from the report header: student full name, semester, program, academic year, report start date, and report end date.
+2. Identify every unique subject name in the report.
+3. For EACH subject, go through EVERY row belonging to that subject and:
+   - Count "P" entries → this is "attended"
+   - Count "A" entries → add to total but NOT to attended
+   - SKIP any "Cancelled" entries entirely — do NOT count them in attended OR total
+   - "total" = number of "P" entries + number of "A" entries (excluding Cancelled)
+4. Double-check your counts by verifying: attended + absent = total for each subject.
+
+Return ONLY a JSON object matching this exact schema:
 {
   "studentName": "Full Name",
   "semester": "Semester III",
@@ -60,14 +70,18 @@ Return ONLY a raw, complete JSON object exactly matching this schema:
   "reportEndDate": "30 Apr 2025",
   "subjects": [
     {
-      "name": "Subject Name Here",
+      "name": "Subject Name",
       "attended": 10,
       "total": 12
     }
   ]
 }
 
-If a metadata field is not found in the report, set its value to an empty string "".
+RULES:
+- "attended" must NEVER be greater than "total".
+- "total" must NEVER include Cancelled classes.
+- If a metadata field is not found, use an empty string "".
+- Do NOT guess or approximate. Count every single row precisely.
 `;
 
     const pdfPart = {
