@@ -12,7 +12,7 @@ app.use(express.json());
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  limits: { fileSize: 5 * 1024 * 1024 }, // 10MB limit
 });
 
 // -------------------- Attendance Analysis Endpoint --------------------
