@@ -10,9 +10,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const upload = multer({ 
+const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }, 
+  limits: { fileSize: 5 * 1024 * 1024 },
 });
 
 // A quick health endpoint to wake up Render instances safely.
@@ -45,13 +45,19 @@ app.post('/api/analyze-attendance', (req, res, next) => {
     const prompt = `
 You are an intelligent attendance analyzer. 
 I have attached a PDF report showing my attendance for my college classes (Date, Subject, A, P, or Cancelled).
-Analyze the report and provide a brief, supportive summary to the student.
-1. Highlight which subjects are doing well.
-2. Clearly identify any subjects where attendance is dangerously low or missed frequently.
-3. Provide an encouraging 2-3 sentence overall summary.
-4. Highlight explicitly if there are "Cancelled" classes.
+Analyze the report and precisely count the attended and total lectures for each explicit subject.
+Do NOT include "Cancelled" classes in the total lecture count.
 
-Please format your ENTIRE response cleanly in Markdown.
+Return ONLY a raw, complete JSON object exactly matching this schema. Do not wrap it in markdown block quotes.
+{
+  "subjects": [
+    {
+      "name": "Subject Name Here",
+      "attended": 10,
+      "total": 12
+    }
+  ]
+}
 `;
 
     const pdfPart = {
@@ -64,7 +70,7 @@ Please format your ENTIRE response cleanly in Markdown.
     // Note: The user manually updated this to use gemini-2.5-flash which is perfect.
     const response = await axios.post(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      { 
+      {
         contents: [
           {
             role: 'user',
@@ -73,12 +79,17 @@ Please format your ENTIRE response cleanly in Markdown.
               pdfPart
             ]
           }
-        ]
+        ],
+        generationConfig: {
+          responseMimeType: "application/json"
+        }
       },
-      { headers: { 'Content-Type': 'application/json' } }
+      { 
+        headers: { 'Content-Type': 'application/json' }
+      }
     );
 
-    const insights = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || 'No insights generated.';
+    const insights = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '{"subjects":[]}';
 
     res.json({ success: true, insights });
   } catch (err) {
