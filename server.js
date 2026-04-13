@@ -101,7 +101,7 @@ RULES:
       );
     };
 
-    const response = await callGemini('gemini-3.1-flash-lite');
+    const response = await callGemini('gemini-3.1-flash-lite-preview');
 
     const insights = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '{"subjects":[]}';
 
@@ -188,7 +188,7 @@ RULES:
       );
     };
 
-    const response = await callGemini('gemini-3.1-flash-lite');
+    const response = await callGemini('gemini-3.1-flash-lite-preview');
 
     const data = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
     res.json({ success: true, data });
