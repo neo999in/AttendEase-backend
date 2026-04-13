@@ -36,7 +36,7 @@ app.post('/api/analyze-attendance', (req, res, next) => {
       return res.status(400).json({ success: false, error: 'No PDF file provided under the "report" field.' });
     }
 
-    if (req.file.mimetype !== 'application/pdf') {
+    if (req.file.mimetype !== 'application/pdf' && !req.file.originalname.toLowerCase().endsWith('.pdf')) {
       return res.status(400).json({ success: false, error: 'Only PDF files are accepted.' });
     }
 
@@ -133,7 +133,7 @@ app.post('/api/extract-setup-data', (req, res, next) => {
 }, async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ success: false, error: 'No PDF file provided under the "report" field.' });
-    if (req.file.mimetype !== 'application/pdf') return res.status(400).json({ success: false, error: 'Only PDF files are accepted.' });
+    if (req.file.mimetype !== 'application/pdf' && !req.file.originalname.toLowerCase().endsWith('.pdf')) return res.status(400).json({ success: false, error: 'Only PDF files are accepted.' });
 
     console.log(`Received PDF for Setup: ${req.file.originalname} (${req.file.size} bytes)`);
 
