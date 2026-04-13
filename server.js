@@ -157,21 +157,20 @@ app.post('/api/extract-setup-data', (req, res, next) => {
 
     const prompt = `
 You are a precise data extractor. I have attached a college attendance PDF report.
+Accuracy is critical — a student's academic standing depends on this.
+
 STEP-BY-STEP INSTRUCTIONS:
 1. Extract metadata from the report header: student full name, program (course), academic year.
 2. Determine the semester as a number if possible, or string.
 3. Identify every unique subject name in the report.
-4. Carefully analyze the dates and subjects throughout the report to reconstruct the recurring weekly timetable.
-   - Determine which subjects occur on which day of the week (1 = Monday, 2 = Tuesday, ..., 6 = Saturday).
-   - Order the subjects chronologically as they were taught that day.
-   - IMPORTANT: If the same subject appears MORE THAN ONCE on the same day (e.g., a lab that runs for 2 consecutive slots), list it MULTIPLE TIMES in that day's subjects array. Do NOT deduplicate.
-5. Extract every individual attendance record listed in the report.
-   - IMPORTANT: If the same subject appears MORE THAN ONCE on the same date in the PDF, output a SEPARATE record for EACH occurrence.
-   - Use the "lectureNumber" field to indicate which occurrence it is that day (1 = first lecture, 2 = second lecture, etc.).
-   - Each record must include: date (YYYY-MM-DD), subject name, status ("P" or "A"), and lectureNumber.
-   - Ignore any "Cancelled" classes entirely.
-
-DO NOT EXTRACT OR RETURN REPORT START DATE OR END DATE.
+4. Extract every individual attendance record listed in the report.
+   - Go through the document row by row.
+   - For every row that has a date and subject:
+     - Extract the date (convert to YYYY-MM-DD).
+     - Extract the subject name exactly.
+     - Extract the status ("P" = Present, "A" = Absent).
+   - IMPORTANT: If a subject occurs multiple times on the same date, output a separate record for EACH occurrence. Do NOT skip any rows.
+   - Ignore "Cancelled" classes.
 
 Return ONLY a JSON object matching exactly this schema:
 {
@@ -183,39 +182,18 @@ Return ONLY a JSON object matching exactly this schema:
     "Subject 1",
     "Subject 2"
   ],
-  "timetable": [
-    {
-      "dayOfWeek": 1,
-      "subjects": ["Subject 1", "Subject 2", "Subject 2"]
-    }
-  ],
   "attendanceRecords": [
     {
       "date": "2025-01-20",
-      "subject": "Subject 1",
-      "status": "P",
-      "lectureNumber": 1
-    },
-    {
-      "date": "2025-01-20",
-      "subject": "Subject 2",
-      "status": "A",
-      "lectureNumber": 1
-    },
-    {
-      "date": "2025-01-20",
-      "subject": "Subject 2",
-      "status": "P",
-      "lectureNumber": 2
+      "subject": "Subject Name",
+      "status": "P"
     }
   ]
 }
 
 RULES:
-- If a metadata field is not found, use an empty string "".
-- If you cannot deduce the timetable securely, provide an empty array [].
-- "attendanceRecords" must be exhaustive — include EVERY single row from the PDF, one entry per lecture occurrence.
-- If a subject occurs twice on the same date, output TWO records with lectureNumber 1 and 2.
+- "attendanceRecords" must be exhaustive. If there are 50 rows in the PDF, there must be 50 entries in the JSON.
+- Do NOT hallucinate a timetable.
 - Provide ONLY the JSON. No markdown formatting.
 `;
 
@@ -224,8 +202,74 @@ RULES:
     };
 
     const response = await callWithFallback(prompt, pdfPart);
-    const data = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-    res.json({ success: true, data });
+    let dataObj = {};
+    try {
+      const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      const cleanedStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
+      dataObj = JSON.parse(cleanedStr);
+    } catch (_) {}
+
+    // Post-process: Deterministically construct timetable and calculate lectureNumbers
+    if (Array.isArray(dataObj.attendanceRecords)) {
+      const dailySubjectCounts = {};
+      const timetableMap = {};
+      
+      dataObj.attendanceRecords.forEach(record => {
+        if (!record.date || !record.subject) return;
+        
+        // Normalize date to YYYY-MM-DD to avoid JS Date parsing inconsistencies
+        const dateMatch = record.date.match(/(\d{4})-(\d{2})-(\d{2})/);
+        if (!dateMatch) return;
+        
+        const [_, year, month, day] = dateMatch;
+        // Construct date using UTC to avoid timezone shifts during getDay()
+        const dateObj = new Date(Date.UTC(parseInt(year), parseInt(month) - 1, parseInt(day)));
+        
+        if (isNaN(dateObj.getTime())) return;
+        
+        // 1. Assign lectureNumber (1st, 2nd, etc. for the same date & subject)
+        const countKey = `${record.date}_${record.subject}`;
+        dailySubjectCounts[countKey] = (dailySubjectCounts[countKey] || 0) + 1;
+        record.lectureNumber = dailySubjectCounts[countKey];
+        
+        // 2. Track maximum occurrences to build the timetable
+        let dayOfWeek = dateObj.getUTCDay(); // 0 = Sunday, 1 = Monday
+        if (dayOfWeek === 0) dayOfWeek = 7; // Convert to Mon=1...Sun=7
+        
+        if (!timetableMap[dayOfWeek]) timetableMap[dayOfWeek] = {};
+        if (!timetableMap[dayOfWeek][record.subject]) {
+          timetableMap[dayOfWeek][record.subject] = { maxDaily: 0, currentDaily: {} };
+        }
+        
+        const stats = timetableMap[dayOfWeek][record.subject];
+        stats.currentDaily[record.date] = (stats.currentDaily[record.date] || 0) + 1;
+        
+        if (stats.currentDaily[record.date] > stats.maxDaily) {
+          stats.maxDaily = stats.currentDaily[record.date];
+        }
+      });
+      
+      // 3. Assemble the final timetable array
+      const timetable = [];
+      for (const [dayStr, subMap] of Object.entries(timetableMap)) {
+        const dayOfWeek = parseInt(dayStr);
+        const subjects = [];
+        
+        // Sort subjects by name for consistency (since we don't know the exact order)
+        const sortedSubjectNames = Object.keys(subMap).sort();
+        
+        for (const subjectName of sortedSubjectNames) {
+          const stats = subMap[subjectName];
+          for (let i = 0; i < stats.maxDaily; i++) {
+            subjects.push(subjectName);
+          }
+        }
+        timetable.push({ dayOfWeek, subjects });
+      }
+      dataObj.timetable = timetable;
+    }
+
+    res.json({ success: true, data: JSON.stringify(dataObj) });
   } catch (err) {
     console.error("Extraction Error:", err.response?.data || err.message);
     res.status(500).json({ success: false, error: 'Failed to extract setup data.' });
