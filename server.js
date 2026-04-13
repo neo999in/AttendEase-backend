@@ -101,7 +101,17 @@ RULES:
       );
     };
 
-    const response = await callGemini('gemini-3.1-flash-lite-preview');
+    let response;
+    try {
+      response = await callGemini('gemini-3-flash-preview');
+    } catch (apiErr) {
+      if (apiErr.response?.status === 503) {
+        console.warn("gemini-3-flash-preview is busy, falling back to gemini-2.5-flash...");
+        response = await callGemini('gemini-2.5-flash');
+      } else {
+        throw apiErr;
+      }
+    }
 
     const insights = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '{"subjects":[]}';
 
@@ -188,7 +198,17 @@ RULES:
       );
     };
 
-    const response = await callGemini('gemini-3.1-flash-lite-preview');
+    let response;
+    try {
+      response = await callGemini('gemini-3-flash-preview');
+    } catch (apiErr) {
+      if (apiErr.response?.status === 503) {
+        console.warn("gemini-3-flash-preview is busy for Setup Extraction, falling back to gemini-2.5-flash...");
+        response = await callGemini('gemini-2.5-flash');
+      } else {
+        throw apiErr;
+      }
+    }
 
     const data = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
     res.json({ success: true, data });
