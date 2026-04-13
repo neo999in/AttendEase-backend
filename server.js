@@ -90,27 +90,28 @@ RULES:
       }
     };
 
-    // Note: The user manually updated this to use gemini-2.5-flash which is perfect.
-    const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      {
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              { text: prompt },
-              pdfPart
-            ]
-          }
-        ],
-        generationConfig: {
-          responseMimeType: "application/json"
-        }
-      },
-      {
-        headers: { 'Content-Type': 'application/json' }
+    const callGemini = async (modelName) => {
+      return axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${process.env.GEMINI_API_KEY}`,
+        {
+          contents: [{ role: 'user', parts: [{ text: prompt }, pdfPart] }],
+          generationConfig: { responseMimeType: "application/json" }
+        },
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    };
+
+    let response;
+    try {
+      response = await callGemini('gemini-2.5-flash');
+    } catch (apiErr) {
+      if (apiErr.response?.status === 503) {
+        console.warn("gemini-2.5-flash is busy, falling back to gemini-1.5-flash...");
+        response = await callGemini('gemini-1.5-flash');
+      } else {
+        throw apiErr;
       }
-    );
+    }
 
     const insights = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '{"subjects":[]}';
 
@@ -186,14 +187,28 @@ RULES:
       inlineData: { mimeType: req.file.mimetype, data: req.file.buffer.toString("base64") }
     };
 
-    const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      {
-        contents: [{ role: 'user', parts: [{ text: prompt }, pdfPart] }],
-        generationConfig: { responseMimeType: "application/json" }
-      },
-      { headers: { 'Content-Type': 'application/json' } }
-    );
+    const callGemini = async (modelName) => {
+      return axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${process.env.GEMINI_API_KEY}`,
+        {
+          contents: [{ role: 'user', parts: [{ text: prompt }, pdfPart] }],
+          generationConfig: { responseMimeType: "application/json" }
+        },
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    };
+
+    let response;
+    try {
+      response = await callGemini('gemini-2.5-flash');
+    } catch (apiErr) {
+      if (apiErr.response?.status === 503) {
+        console.warn("gemini-2.5-flash is busy for Setup Extraction, falling back to gemini-1.5-flash...");
+        response = await callGemini('gemini-1.5-flash');
+      } else {
+        throw apiErr;
+      }
+    }
 
     const data = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
     res.json({ success: true, data });
