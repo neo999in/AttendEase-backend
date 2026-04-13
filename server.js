@@ -103,11 +103,11 @@ RULES:
 
     let response;
     try {
-      response = await callGemini('gemini-2.5-flash');
+      response = await callGemini('gemma-3-4b-it');
     } catch (apiErr) {
       if (apiErr.response?.status === 503) {
-        console.warn("gemini-2.5-flash is busy, falling back to gemini-2.5-flash-lite...");
-        response = await callGemini('gemini-2.5-flash-lite');
+        console.warn("Gemma 3 4B is busy, falling back to Gemini 3.1 Flash Lite...");
+        response = await callGemini('gemini-3.1-flash-lite');
       } else {
         throw apiErr;
       }
@@ -200,11 +200,11 @@ RULES:
 
     let response;
     try {
-      response = await callGemini('gemini-2.5-flash');
+      response = await callGemini('gemma-3-4b-it');
     } catch (apiErr) {
       if (apiErr.response?.status === 503) {
-        console.warn("gemini-2.5-flash is busy for Setup Extraction, falling back to gemini-2.5-flash-lite...");
-        response = await callGemini('gemini-2.5-flash-lite');
+        console.warn("Gemma 3 4B is busy for Setup Extraction, falling back to Gemini 3.1 Flash Lite...");
+        response = await callGemini('gemini-3.1-flash-lite');
       } else {
         throw apiErr;
       }
