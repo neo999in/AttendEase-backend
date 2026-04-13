@@ -15,14 +15,54 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 },
 });
 
-// A quick health endpoint to wake up Render instances safely.
+// ── Model Fallback Chain ──────────────────────────────────────────────────────
+// Tried top-to-bottom; advances to the next on HTTP 503 (model overloaded).
+const GEMINI_MODELS = [
+  'gemini-3-flash-preview',
+  'gemini-2.5-flash',
+  'gemini-3.1-flash-lite-preview',
+  'gemini-2.5-flash-lite',
+];
+
+/**
+ * Calls the Gemini generateContent API, trying each model in GEMINI_MODELS
+ * order. Falls back to the next model on 503 overloaded errors only.
+ * Throws on any other error or when all models are exhausted.
+ */
+async function callWithFallback(prompt, pdfPart) {
+  let lastError;
+  for (const model of GEMINI_MODELS) {
+    try {
+      console.log(`[Gemini] Trying model: ${model}`);
+      const response = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`,
+        {
+          contents: [{ role: 'user', parts: [{ text: prompt }, pdfPart] }],
+          generationConfig: { responseMimeType: 'application/json' },
+        },
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+      console.log(`[Gemini] Success with model: ${model}`);
+      return response;
+    } catch (err) {
+      if (err.response?.status === 503) {
+        console.warn(`[Gemini] ${model} is overloaded (503), trying next fallback...`);
+        lastError = err;
+      } else {
+        throw err; // Non-503 errors propagate immediately
+      }
+    }
+  }
+  throw lastError; // All models exhausted
+}
+
+// ── Health Check ──────────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
   res.json({ status: 'awake', timestamp: new Date() });
 });
 
-// -------------------- Attendance Analysis Endpoint --------------------
+// ── Attendance Analysis Endpoint (Web) ────────────────────────────────────────
 app.post('/api/analyze-attendance', (req, res, next) => {
-  // Catch Multer errors gracefully so we don't crash and break CORS
   upload.single('report')(req, res, function (err) {
     if (err) {
       console.error("Multer Error:", err);
@@ -35,7 +75,6 @@ app.post('/api/analyze-attendance', (req, res, next) => {
     if (!req.file) {
       return res.status(400).json({ success: false, error: 'No PDF file provided under the "report" field.' });
     }
-
     if (req.file.mimetype !== 'application/pdf') {
       return res.status(400).json({ success: false, error: 'Only PDF files are accepted.' });
     }
@@ -90,28 +129,7 @@ RULES:
       }
     };
 
-    // Note: The user manually updated this to use gemini-2.5-flash which is perfect.
-    const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      {
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              { text: prompt },
-              pdfPart
-            ]
-          }
-        ],
-        generationConfig: {
-          responseMimeType: "application/json"
-        }
-      },
-      {
-        headers: { 'Content-Type': 'application/json' }
-      }
-    );
-
+    const response = await callWithFallback(prompt, pdfPart);
     const insights = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '{"subjects":[]}';
 
     res.json({ success: true, insights });
@@ -121,7 +139,7 @@ RULES:
   }
 });
 
-// -------------------- Setup Data Extraction Endpoint (Android) --------------------
+// ── Setup Data Extraction Endpoint (Android) ──────────────────────────────────
 app.post('/api/extract-setup-data', (req, res, next) => {
   upload.single('report')(req, res, function (err) {
     if (err) {
@@ -184,15 +202,7 @@ RULES:
       inlineData: { mimeType: req.file.mimetype, data: req.file.buffer.toString("base64") }
     };
 
-    const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      {
-        contents: [{ role: 'user', parts: [{ text: prompt }, pdfPart] }],
-        generationConfig: { responseMimeType: "application/json" }
-      },
-      { headers: { 'Content-Type': 'application/json' } }
-    );
-
+    const response = await callWithFallback(prompt, pdfPart);
     const data = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
     res.json({ success: true, data });
   } catch (err) {
@@ -201,7 +211,7 @@ RULES:
   }
 });
 
-// Global Error Handler to guarantee JSON responses (ensures CORS works on crashes)
+// ── Global Error Handler ──────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error("Critical Server Error:", err);
   res.status(500).json({ success: false, error: `Critical server error: ${err.message}` });
