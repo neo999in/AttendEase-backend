@@ -101,17 +101,7 @@ RULES:
       );
     };
 
-    let response;
-    try {
-      response = await callGemini('gemma-3-4b-it');
-    } catch (apiErr) {
-      if (apiErr.response?.status === 503) {
-        console.warn("Gemma 3 4B is busy, falling back to Gemini 3.1 Flash Lite...");
-        response = await callGemini('gemini-3.1-flash-lite');
-      } else {
-        throw apiErr;
-      }
-    }
+    const response = await callGemini('gemini-3.1-flash-lite');
 
     const insights = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '{"subjects":[]}';
 
@@ -198,17 +188,7 @@ RULES:
       );
     };
 
-    let response;
-    try {
-      response = await callGemini('gemma-3-4b-it');
-    } catch (apiErr) {
-      if (apiErr.response?.status === 503) {
-        console.warn("Gemma 3 4B is busy for Setup Extraction, falling back to Gemini 3.1 Flash Lite...");
-        response = await callGemini('gemini-3.1-flash-lite');
-      } else {
-        throw apiErr;
-      }
-    }
+    const response = await callGemini('gemini-3.1-flash-lite');
 
     const data = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
     res.json({ success: true, data });
