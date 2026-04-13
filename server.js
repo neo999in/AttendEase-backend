@@ -116,8 +116,11 @@ RULES:
 
     res.json({ success: true, insights });
   } catch (err) {
-    console.error("Attendance Analysis Error:", err.response?.data || err.message);
-    res.status(500).json({ success: false, error: 'Failed to analyze attendance report. See backend logs.' });
+    const apiErrorMessage = err.response?.data?.error?.message;
+    const msg = (apiErrorMessage && apiErrorMessage.includes('demand')) 
+      ? 'The AI model is overloaded due to high demand. Please try again in a few moments.' 
+      : 'Failed to analyze attendance report. See backend logs.';
+    res.status(500).json({ success: false, error: msg });
   }
 });
 
@@ -179,8 +182,12 @@ RULES:
     const data = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
     res.json({ success: true, data });
   } catch (err) {
-    console.error("Extraction Error:", err.response?.data || err.message);
-    res.status(500).json({ success: false, error: 'Failed to extract setup data.' });
+    console.error("Extraction Error (Full Details):", err.response ? JSON.stringify(err.response.data, null, 2) : err.message);
+    const apiErrorMessage = err.response?.data?.error?.message;
+    const msg = (apiErrorMessage && apiErrorMessage.includes('demand')) 
+      ? 'The AI model is overloaded due to high demand. Please try again in a few moments.' 
+      : 'Failed to extract setup data.';
+    res.status(500).json({ success: false, error: msg });
   }
 });
 
