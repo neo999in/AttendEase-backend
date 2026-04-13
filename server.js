@@ -147,6 +147,7 @@ STEP-BY-STEP INSTRUCTIONS:
 2. Determine the semester as a number if possible, or string.
 3. Identify every unique subject name in the report.
 4. Carefully analyze the dates and subjects throughout the report to reconstruct the recurring weekly timetable. Determine which subjects occur on which day of the week (1 = Monday, 2 = Tuesday, ..., 6 = Saturday). Order the subjects chronologically as they were taught that day.
+5. Extract every individual attendance record listed in the report. For each entry, provide the date (in YYYY-MM-DD format), the subject name, and the status ("P" for Present, "A" for Absent). Ignore any "Cancelled" classes.
 
 DO NOT EXTRACT OR RETURN REPORT START DATE OR END DATE.
 
@@ -164,6 +165,13 @@ Return ONLY a JSON object matching exactly this schema:
     {
       "dayOfWeek": 1,
       "subjects": ["Subject 1", "Subject 2"]
+    }
+  ],
+  "attendanceRecords": [
+    {
+      "date": "2025-01-20",
+      "subject": "Subject 1",
+      "status": "P"
     }
   ]
 }
