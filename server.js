@@ -161,8 +161,15 @@ STEP-BY-STEP INSTRUCTIONS:
 1. Extract metadata from the report header: student full name, program (course), academic year.
 2. Determine the semester as a number if possible, or string.
 3. Identify every unique subject name in the report.
-4. Carefully analyze the dates and subjects throughout the report to reconstruct the recurring weekly timetable. Determine which subjects occur on which day of the week (1 = Monday, 2 = Tuesday, ..., 6 = Saturday). Order the subjects chronologically as they were taught that day.
-5. Extract every individual attendance record listed in the report. For each entry, provide the date (in YYYY-MM-DD format), the subject name, and the status ("P" for Present, "A" for Absent). Ignore any "Cancelled" classes.
+4. Carefully analyze the dates and subjects throughout the report to reconstruct the recurring weekly timetable.
+   - Determine which subjects occur on which day of the week (1 = Monday, 2 = Tuesday, ..., 6 = Saturday).
+   - Order the subjects chronologically as they were taught that day.
+   - IMPORTANT: If the same subject appears MORE THAN ONCE on the same day (e.g., a lab that runs for 2 consecutive slots), list it MULTIPLE TIMES in that day's subjects array. Do NOT deduplicate.
+5. Extract every individual attendance record listed in the report.
+   - IMPORTANT: If the same subject appears MORE THAN ONCE on the same date in the PDF, output a SEPARATE record for EACH occurrence.
+   - Use the "lectureNumber" field to indicate which occurrence it is that day (1 = first lecture, 2 = second lecture, etc.).
+   - Each record must include: date (YYYY-MM-DD), subject name, status ("P" or "A"), and lectureNumber.
+   - Ignore any "Cancelled" classes entirely.
 
 DO NOT EXTRACT OR RETURN REPORT START DATE OR END DATE.
 
@@ -179,14 +186,27 @@ Return ONLY a JSON object matching exactly this schema:
   "timetable": [
     {
       "dayOfWeek": 1,
-      "subjects": ["Subject 1", "Subject 2"]
+      "subjects": ["Subject 1", "Subject 2", "Subject 2"]
     }
   ],
   "attendanceRecords": [
     {
       "date": "2025-01-20",
       "subject": "Subject 1",
-      "status": "P"
+      "status": "P",
+      "lectureNumber": 1
+    },
+    {
+      "date": "2025-01-20",
+      "subject": "Subject 2",
+      "status": "A",
+      "lectureNumber": 1
+    },
+    {
+      "date": "2025-01-20",
+      "subject": "Subject 2",
+      "status": "P",
+      "lectureNumber": 2
     }
   ]
 }
@@ -194,7 +214,8 @@ Return ONLY a JSON object matching exactly this schema:
 RULES:
 - If a metadata field is not found, use an empty string "".
 - If you cannot deduce the timetable securely, provide an empty array [].
-- "attendanceRecords" must be exhaustive — include every single row from the PDF.
+- "attendanceRecords" must be exhaustive — include EVERY single row from the PDF, one entry per lecture occurrence.
+- If a subject occurs twice on the same date, output TWO records with lectureNumber 1 and 2.
 - Provide ONLY the JSON. No markdown formatting.
 `;
 
