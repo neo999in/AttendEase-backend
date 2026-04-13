@@ -146,6 +146,7 @@ STEP-BY-STEP INSTRUCTIONS:
 1. Extract metadata from the report header: student full name, program (course), academic year.
 2. Determine the semester as a number if possible, or string.
 3. Identify every unique subject name in the report.
+4. Carefully analyze the dates and subjects throughout the report to reconstruct the recurring weekly timetable. Determine which subjects occur on which day of the week (1 = Monday, 2 = Tuesday, ..., 6 = Saturday). Order the subjects chronologically as they were taught that day.
 
 DO NOT EXTRACT OR RETURN REPORT START DATE OR END DATE.
 
@@ -158,11 +159,18 @@ Return ONLY a JSON object matching exactly this schema:
   "subjects": [
     "Subject 1",
     "Subject 2"
+  ],
+  "timetable": [
+    {
+      "dayOfWeek": 1,
+      "subjects": ["Subject 1", "Subject 2"]
+    }
   ]
 }
 
 RULES:
 - If a metadata field is not found, use an empty string "".
+- If you cannot deduce the timetable securely, provide an empty array [].
 - Provide ONLY the JSON. No markdown formatting.
 `;
 
