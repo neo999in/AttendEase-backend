@@ -203,8 +203,8 @@ RULES:
       response = await callGemini('gemini-2.5-flash');
     } catch (apiErr) {
       if (apiErr.response?.status === 503) {
-        console.warn("gemini-2.5-flash is busy for Setup Extraction, falling back to gemini-1.5-flash...");
-        response = await callGemini('gemini-1.5-flash');
+        console.warn("gemini-2.5-flash is busy for Setup Extraction, falling back to gemini-2.5-flash-lite...");
+        response = await callGemini('gemini-2.5-flash-lite');
       } else {
         throw apiErr;
       }
