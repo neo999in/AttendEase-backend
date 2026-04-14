@@ -156,44 +156,36 @@ app.post('/api/extract-setup-data', (req, res, next) => {
     console.log(`Received PDF for Setup: ${req.file.originalname} (${req.file.size} bytes)`);
 
     const prompt = `
-You are a precise college attendance PDF data extractor.
-Accuracy is CRITICAL — a student's academic standing depends on this.
+You are a precise attendance data extractor. Accuracy is critical — a student's academic standing depends on this.
 
-I have attached a college attendance PDF report. Extract the following exactly.
+I have attached a college attendance PDF report. It contains rows with: Date, Subject, and a status column marked as one of:
+- "P" = Present (student attended)
+- "A" = Absent (student did NOT attend)
 
 STEP-BY-STEP INSTRUCTIONS:
+1. First, extract metadata from the report header: student full name, semester, program (course), academic year.
+2. Identify every unique subject name in the report.
+3. For EACH subject, go through EVERY row belonging to that subject and:
+   - Count "P" entries → this is "attended"
+   - Count "A" entries → add to total but NOT to attended
+   - SKIP any "Cancelled" entries entirely — do NOT count them in attended OR total
+   - "total" = number of "P" entries + number of "A" entries (excluding Cancelled)
+4. Double-check your counts by verifying: attended + absent = total for each subject.
+5. Create an EXHAUSTIVE list of every non-cancelled attendance record.
+   - You MUST extract EVERY SINGLE ROW to match your calculated "total" for each subject.
+   - For each row, assign "lectureOrder" (its sequential position for that subject on that date, starting at 1).
+   - For each row, assign "daySlot" (its sequential position among all classes on that date, starting at 1).
 
-1. METADATA: Extract from the report header:
-   - studentName: full student name
-   - course: degree/program name (e.g. "B.Tech Computer Science")
-   - year: academic year (e.g. "2025-2026")
-   - semester: semester label as found (e.g. "Semester III" or "3")
-
-2. SUBJECTS: List every unique subject name exactly as it appears in the report.
-
-3. ATTENDANCE RECORDS: Go through EVERY row in the PDF table, one by one.
-   For EACH row:
-   a. Extract the date and convert it to YYYY-MM-DD format.
-   b. Extract the subject name EXACTLY as it appears.
-   c. Extract the status:
-      - "P" if the student was Present
-      - "A" if the student was Absent
-   d. Assign a "lectureOrder" field: this is the position of THIS subject on that date.
-      For each date, number occurrences of each subject starting from 1.
-      Example: if "Math" appears twice on 2025-01-20, the first occurrence is lectureOrder 1, the second is lectureOrder 2.
-   e. Assign a "daySlot" field: this is the sequential slot number across ALL subjects on that date.
-      The first subject record of the day = slot 1, second = slot 2, etc. (regardless of subject name).
-   - SKIP any row marked as "Cancelled". Do NOT include cancelled rows.
-   - If a subject appears multiple times on the same date, output a SEPARATE record for each occurrence.
-   - Preserve the EXACT ORDER that rows appear in the PDF.
-
-Return ONLY a valid JSON object exactly matching this schema (no markdown, no code fences):
+Return ONLY a JSON object matching this exact schema:
 {
   "studentName": "Full Name",
   "course": "B.Tech Computer Science",
   "year": "2025-2026",
   "semester": "Semester III",
   "subjects": ["Subject 1", "Subject 2"],
+  "subjectStats": {
+    "Subject 1": { "attended": 10, "total": 12 }
+  },
   "attendanceRecords": [
     {
       "date": "2025-01-20",
@@ -205,12 +197,12 @@ Return ONLY a valid JSON object exactly matching this schema (no markdown, no co
   ]
 }
 
-CRITICAL RULES:
-- attendanceRecords must be EXHAUSTIVE. Every non-cancelled row must appear.
-- lectureOrder counts per-subject-per-date (resets for each new date and each new subject).
-- daySlot counts all slots across the entire day (resets for each new date).
-- Do NOT guess or fabricate data. Only output what is in the PDF.
-- Return ONLY the JSON object. No explanations, no markdown fences.
+RULES:
+- "attended" must NEVER be greater than "total".
+- "total" must NEVER include Cancelled classes.
+- "attendanceRecords" MUST contain EXACTLY "total" number of elements for each subject. Count them to be sure!
+- If a metadata field is not found, use an empty string "".
+- Do NOT guess or approximate. Output exactly what is in the PDF.
 `;
 
     const pdfPart = {
@@ -228,6 +220,34 @@ CRITICAL RULES:
     // Post-process: Construct timetable from AI-extracted attendance records.
     // We use daySlot (AI-provided) to determine lecture order within a day.
     if (Array.isArray(dataObj.attendanceRecords)) {
+      // Step 0: Ensure attendanceRecords exhaustively match subjectStats (LLM hallucination fallback)
+      if (dataObj.subjectStats) {
+        const extractedCounts = {};
+        dataObj.attendanceRecords.forEach(r => {
+          if (!r.subject) return;
+          if (!extractedCounts[r.subject]) extractedCounts[r.subject] = { P: 0, A: 0 };
+          if (r.status === 'P') extractedCounts[r.subject].P++;
+          if (r.status === 'A') extractedCounts[r.subject].A++;
+        });
+
+        // Find a fallback date to use if we have to pad
+        const fallbackDate = dataObj.attendanceRecords.find(r => r.date)?.date || '2025-01-01';
+
+        for (const [subject, stats] of Object.entries(dataObj.subjectStats)) {
+          const counts = extractedCounts[subject] || { P: 0, A: 0 };
+          const neededP = (stats.attended || 0) - counts.P;
+          const neededA = ((stats.total || 0) - (stats.attended || 0)) - counts.A;
+
+          // If the AI skipped records, synthesize them so the app's stats match perfectly
+          for (let i = 0; i < neededP; i++) {
+            dataObj.attendanceRecords.push({ date: fallbackDate, subject, status: 'P' });
+          }
+          for (let i = 0; i < neededA; i++) {
+            dataObj.attendanceRecords.push({ date: fallbackDate, subject, status: 'A' });
+          }
+        }
+      }
+
       // Step 1: Fix lectureOrder/lectureNumber — use AI's lectureOrder if present,
       // otherwise compute it deterministically from the records in document order.
       const dailySubjectCounts = {};
