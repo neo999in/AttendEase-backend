@@ -168,9 +168,7 @@ STEP-BY-STEP INSTRUCTIONS:
    - For every row that has a date and subject:
      - Extract the date (convert to YYYY-MM-DD).
      - Extract the subject name exactly.
-     - Extract the status ("P" = Present, "A" = Absent).
-   - IMPORTANT: If a subject occurs multiple times on the same date, output a separate record for EACH occurrence. Do NOT skip any rows.
-   - Ignore "Cancelled" classes.
+     - Extract the status ("P" = Present, "A" = Absent)..
 
 Return ONLY a JSON object matching exactly this schema:
 {
