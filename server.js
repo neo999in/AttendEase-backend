@@ -156,43 +156,61 @@ app.post('/api/extract-setup-data', (req, res, next) => {
     console.log(`Received PDF for Setup: ${req.file.originalname} (${req.file.size} bytes)`);
 
     const prompt = `
-You are a precise data extractor. I have attached a college attendance PDF report.
-Accuracy is critical — a student's academic standing depends on this.
+You are a precise college attendance PDF data extractor.
+Accuracy is CRITICAL — a student's academic standing depends on this.
+
+I have attached a college attendance PDF report. Extract the following exactly.
 
 STEP-BY-STEP INSTRUCTIONS:
-1. Extract metadata from the report header: student full name, program (course), academic year.
-2. Determine the semester as a number if possible, or string.
-3. Identify every unique subject name in the report.
-4. Extract every individual attendance record listed in the report.
-   - Go through the document row by row.
-   - For every row that has a date and subject:
-     - Extract the date (convert to YYYY-MM-DD).
-     - Extract the subject name exactly.
-     - Extract the status ("P" = Present, "A" = Absent)..
 
-Return ONLY a JSON object matching exactly this schema:
+1. METADATA: Extract from the report header:
+   - studentName: full student name
+   - course: degree/program name (e.g. "B.Tech Computer Science")
+   - year: academic year (e.g. "2025-2026")
+   - semester: semester label as found (e.g. "Semester III" or "3")
+
+2. SUBJECTS: List every unique subject name exactly as it appears in the report.
+
+3. ATTENDANCE RECORDS: Go through EVERY row in the PDF table, one by one.
+   For EACH row:
+   a. Extract the date and convert it to YYYY-MM-DD format.
+   b. Extract the subject name EXACTLY as it appears.
+   c. Extract the status:
+      - "P" if the student was Present
+      - "A" if the student was Absent
+   d. Assign a "lectureOrder" field: this is the position of THIS subject on that date.
+      For each date, number occurrences of each subject starting from 1.
+      Example: if "Math" appears twice on 2025-01-20, the first occurrence is lectureOrder 1, the second is lectureOrder 2.
+   e. Assign a "daySlot" field: this is the sequential slot number across ALL subjects on that date.
+      The first subject record of the day = slot 1, second = slot 2, etc. (regardless of subject name).
+   - SKIP any row marked as "Cancelled". Do NOT include cancelled rows.
+   - If a subject appears multiple times on the same date, output a SEPARATE record for each occurrence.
+   - Preserve the EXACT ORDER that rows appear in the PDF.
+
+Return ONLY a valid JSON object exactly matching this schema (no markdown, no code fences):
 {
   "studentName": "Full Name",
   "course": "B.Tech Computer Science",
   "year": "2025-2026",
   "semester": "Semester III",
-  "subjects": [
-    "Subject 1",
-    "Subject 2"
-  ],
+  "subjects": ["Subject 1", "Subject 2"],
   "attendanceRecords": [
     {
       "date": "2025-01-20",
       "subject": "Subject Name",
-      "status": "P"
+      "status": "P",
+      "lectureOrder": 1,
+      "daySlot": 3
     }
   ]
 }
 
-RULES:
-- "attendanceRecords" must be exhaustive. If there are 50 rows in the PDF, there must be 50 entries in the JSON.
-- Do NOT hallucinate a timetable.
-- Provide ONLY the JSON. No markdown formatting.
+CRITICAL RULES:
+- attendanceRecords must be EXHAUSTIVE. Every non-cancelled row must appear.
+- lectureOrder counts per-subject-per-date (resets for each new date and each new subject).
+- daySlot counts all slots across the entire day (resets for each new date).
+- Do NOT guess or fabricate data. Only output what is in the PDF.
+- Return ONLY the JSON object. No explanations, no markdown fences.
 `;
 
     const pdfPart = {
@@ -207,63 +225,103 @@ RULES:
       dataObj = JSON.parse(cleanedStr);
     } catch (_) { }
 
-    // Post-process: Deterministically construct timetable and calculate lectureNumbers
+    // Post-process: Construct timetable from AI-extracted attendance records.
+    // We use daySlot (AI-provided) to determine lecture order within a day.
     if (Array.isArray(dataObj.attendanceRecords)) {
+      // Step 1: Fix lectureOrder/lectureNumber — use AI's lectureOrder if present,
+      // otherwise compute it deterministically from the records in document order.
       const dailySubjectCounts = {};
+      const dailySlotCounts = {};
+
+      dataObj.attendanceRecords.forEach(record => {
+        if (!record.date || !record.subject) return;
+
+        // Compute lectureNumber (per-subject-per-date counter), used by the Flutter side
+        const countKey = `${record.date}_${record.subject}`;
+        dailySubjectCounts[countKey] = (dailySubjectCounts[countKey] || 0) + 1;
+        // Only override if AI didn't provide it
+        if (!record.lectureOrder && !record.lectureNumber) {
+          record.lectureNumber = dailySubjectCounts[countKey];
+        } else {
+          // Prefer AI-supplied lectureOrder as lectureNumber
+          record.lectureNumber = record.lectureOrder || dailySubjectCounts[countKey];
+        }
+
+        // Compute daySlot if AI didn't provide it
+        if (!record.daySlot) {
+          dailySlotCounts[record.date] = (dailySlotCounts[record.date] || 0) + 1;
+          record.daySlot = dailySlotCounts[record.date];
+        }
+      });
+
+      // Step 2: Build timetable per day-of-week.
+      // For each day, we need to know which subjects appear and in what slot order.
+      // Key insight: use daySlot to determine the ORDER of subjects in the timetable.
+      // We track, for each (dayOfWeek, subject), the MINIMUM daySlot seen across all dates
+      // (to determine where in the day the subject sits) and MAXIMUM daily repetitions.
+      //
+      // timetableMap[dayOfWeek][subject] = { minSlot, maxReps, slotsByDate }
       const timetableMap = {};
 
       dataObj.attendanceRecords.forEach(record => {
         if (!record.date || !record.subject) return;
 
-        // Normalize date to YYYY-MM-DD to avoid JS Date parsing inconsistencies
         const dateMatch = record.date.match(/(\d{4})-(\d{2})-(\d{2})/);
         if (!dateMatch) return;
 
         const [_, year, month, day] = dateMatch;
-        // Construct date using UTC to avoid timezone shifts during getDay()
         const dateObj = new Date(Date.UTC(parseInt(year), parseInt(month) - 1, parseInt(day)));
-
         if (isNaN(dateObj.getTime())) return;
 
-        // 1. Assign lectureNumber (1st, 2nd, etc. for the same date & subject)
-        const countKey = `${record.date}_${record.subject}`;
-        dailySubjectCounts[countKey] = (dailySubjectCounts[countKey] || 0) + 1;
-        record.lectureNumber = dailySubjectCounts[countKey];
-
-        // 2. Track maximum occurrences to build the timetable
-        let dayOfWeek = dateObj.getUTCDay(); // 0 = Sunday, 1 = Monday
-        if (dayOfWeek === 0) dayOfWeek = 7; // Convert to Mon=1...Sun=7
+        let dayOfWeek = dateObj.getUTCDay(); // 0=Sun
+        if (dayOfWeek === 0) dayOfWeek = 7;  // Mon=1 … Sun=7
 
         if (!timetableMap[dayOfWeek]) timetableMap[dayOfWeek] = {};
         if (!timetableMap[dayOfWeek][record.subject]) {
-          timetableMap[dayOfWeek][record.subject] = { maxDaily: 0, currentDaily: {} };
+          timetableMap[dayOfWeek][record.subject] = {
+            minSlot: Infinity,   // earliest daySlot seen for this subject on this weekday
+            maxReps: 0,          // max times this subject appears in one day
+            repsByDate: {},      // counts per date to compute maxReps
+          };
         }
 
-        const stats = timetableMap[dayOfWeek][record.subject];
-        stats.currentDaily[record.date] = (stats.currentDaily[record.date] || 0) + 1;
+        const entry = timetableMap[dayOfWeek][record.subject];
 
-        if (stats.currentDaily[record.date] > stats.maxDaily) {
-          stats.maxDaily = stats.currentDaily[record.date];
+        // Track earliest slot this subject appears in the day (to sort later)
+        const slot = record.daySlot || record.lectureNumber || 1;
+        if (slot < entry.minSlot) entry.minSlot = slot;
+
+        // Track max repetitions per date
+        entry.repsByDate[record.date] = (entry.repsByDate[record.date] || 0) + 1;
+        if (entry.repsByDate[record.date] > entry.maxReps) {
+          entry.maxReps = entry.repsByDate[record.date];
         }
       });
 
-      // 3. Assemble the final timetable array
+      // Step 3: Assemble the timetable array.
+      // For each day, sort subjects by their minSlot (first-appearance order in the day),
+      // then expand repeated subjects inline.
       const timetable = [];
       for (const [dayStr, subMap] of Object.entries(timetableMap)) {
         const dayOfWeek = parseInt(dayStr);
+
+        // Sort subjects by earliest slot seen on this day (preserves PDF order)
+        const orderedSubjects = Object.keys(subMap).sort(
+          (a, b) => subMap[a].minSlot - subMap[b].minSlot
+        );
+
         const subjects = [];
-
-        // Sort subjects by name for consistency (since we don't know the exact order)
-        const sortedSubjectNames = Object.keys(subMap).sort();
-
-        for (const subjectName of sortedSubjectNames) {
-          const stats = subMap[subjectName];
-          for (let i = 0; i < stats.maxDaily; i++) {
+        for (const subjectName of orderedSubjects) {
+          const { maxReps } = subMap[subjectName];
+          for (let i = 0; i < maxReps; i++) {
             subjects.push(subjectName);
           }
         }
         timetable.push({ dayOfWeek, subjects });
       }
+
+      // Sort timetable by dayOfWeek for consistency
+      timetable.sort((a, b) => a.dayOfWeek - b.dayOfWeek);
       dataObj.timetable = timetable;
     }
 
