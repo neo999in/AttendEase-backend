@@ -205,57 +205,57 @@ RULES:
       const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
       const cleanedStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
       dataObj = JSON.parse(cleanedStr);
-    } catch (_) {}
+    } catch (_) { }
 
     // Post-process: Deterministically construct timetable and calculate lectureNumbers
     if (Array.isArray(dataObj.attendanceRecords)) {
       const dailySubjectCounts = {};
       const timetableMap = {};
-      
+
       dataObj.attendanceRecords.forEach(record => {
         if (!record.date || !record.subject) return;
-        
+
         // Normalize date to YYYY-MM-DD to avoid JS Date parsing inconsistencies
         const dateMatch = record.date.match(/(\d{4})-(\d{2})-(\d{2})/);
         if (!dateMatch) return;
-        
+
         const [_, year, month, day] = dateMatch;
         // Construct date using UTC to avoid timezone shifts during getDay()
         const dateObj = new Date(Date.UTC(parseInt(year), parseInt(month) - 1, parseInt(day)));
-        
+
         if (isNaN(dateObj.getTime())) return;
-        
+
         // 1. Assign lectureNumber (1st, 2nd, etc. for the same date & subject)
         const countKey = `${record.date}_${record.subject}`;
         dailySubjectCounts[countKey] = (dailySubjectCounts[countKey] || 0) + 1;
         record.lectureNumber = dailySubjectCounts[countKey];
-        
+
         // 2. Track maximum occurrences to build the timetable
         let dayOfWeek = dateObj.getUTCDay(); // 0 = Sunday, 1 = Monday
         if (dayOfWeek === 0) dayOfWeek = 7; // Convert to Mon=1...Sun=7
-        
+
         if (!timetableMap[dayOfWeek]) timetableMap[dayOfWeek] = {};
         if (!timetableMap[dayOfWeek][record.subject]) {
           timetableMap[dayOfWeek][record.subject] = { maxDaily: 0, currentDaily: {} };
         }
-        
+
         const stats = timetableMap[dayOfWeek][record.subject];
         stats.currentDaily[record.date] = (stats.currentDaily[record.date] || 0) + 1;
-        
+
         if (stats.currentDaily[record.date] > stats.maxDaily) {
           stats.maxDaily = stats.currentDaily[record.date];
         }
       });
-      
+
       // 3. Assemble the final timetable array
       const timetable = [];
       for (const [dayStr, subMap] of Object.entries(timetableMap)) {
         const dayOfWeek = parseInt(dayStr);
         const subjects = [];
-        
+
         // Sort subjects by name for consistency (since we don't know the exact order)
         const sortedSubjectNames = Object.keys(subMap).sort();
-        
+
         for (const subjectName of sortedSubjectNames) {
           const stats = subMap[subjectName];
           for (let i = 0; i < stats.maxDaily; i++) {
