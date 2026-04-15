@@ -157,7 +157,7 @@ app.post('/api/extract-setup-data', (req, res, next) => {
 
     console.log(`Received PDF for Setup: ${req.file.originalname} (${req.file.size} bytes)`);
 
-    // Same accurate prompt as the web endpoint — counts every P/A row per subject.
+    // Two-phase extraction: accurate summary counts + dated records for calendar.
     const prompt = `
 You are a precise attendance data extractor. Accuracy is critical — a student's academic standing depends on this.
 
@@ -166,14 +166,15 @@ I have attached a college attendance PDF report. It contains rows with: Date, Su
 - "A" = Absent (student did NOT attend)
 
 STEP-BY-STEP INSTRUCTIONS:
-1. First, extract metadata from the report header: student full name, semester, program (course), academic year.
+1. Extract metadata: student full name, semester, program (course), academic year.
 2. Identify every unique subject name in the report.
-3. For EACH subject, go through EVERY row belonging to that subject and:
-   - Count "P" entries → this is "attended"
-   - Count "A" entries → add to total but NOT to attended
-   - SKIP any "Cancelled" entries entirely — do NOT count them in attended OR total
-   - "total" = number of "P" entries + number of "A" entries (excluding Cancelled)
-4. Double-check your counts by verifying: attended + absent = total for each subject.
+3. For EACH subject, count EVERY row:
+   - Count "P" entries → "attended"
+   - Count "A" entries → add to total but NOT attended
+   - SKIP "Cancelled" entries entirely
+   - "total" = P + A (no Cancelled)
+4. Verify: attended + absent = total for each subject.
+5. Extract EVERY non-cancelled row as an attendance record with its date.
 
 Return ONLY a JSON object matching this exact schema:
 {
@@ -185,14 +186,19 @@ Return ONLY a JSON object matching this exact schema:
   "subjectStats": {
     "Subject 1": { "attended": 10, "total": 12 },
     "Subject 2": { "attended": 8, "total": 10 }
-  }
+  },
+  "attendanceRecords": [
+    { "date": "2025-01-20", "subject": "Subject 1", "status": "P" },
+    { "date": "2025-01-21", "subject": "Subject 2", "status": "A" }
+  ]
 }
 
 RULES:
-- "attended" must NEVER be greater than "total".
+- "attended" in subjectStats must NEVER be greater than "total".
 - "total" must NEVER include Cancelled classes.
+- "attendanceRecords" must use date format "YYYY-MM-DD" EXACTLY (e.g., "2025-01-05", always pad single digits with zero).
 - If a metadata field is not found, use an empty string "".
-- Do NOT guess or approximate. Count every single row precisely.
+- Do NOT guess or approximate. Extract exactly what is in the PDF.
 `;
 
     const pdfPart = {
