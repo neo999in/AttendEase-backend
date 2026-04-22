@@ -16,6 +16,7 @@ const upload = multer({
 });
 
 // ── Model Fallback Chain ──────────────────────────────────────────────────────
+// Tried top-to-bottom; advances to the next on HTTP 503 (model overloaded).
 const GEMINI_MODELS = [
   'gemini-3-flash-preview',
   'gemini-2.5-flash',
@@ -23,6 +24,11 @@ const GEMINI_MODELS = [
   'gemini-2.5-flash-lite',
 ];
 
+/**
+ * Calls the Gemini generateContent API, trying each model in GEMINI_MODELS
+ * order. Falls back to the next model on 503 overloaded errors only.
+ * Throws on any other error or when all models are exhausted.
+ */
 async function callWithFallback(prompt, pdfPart) {
   let lastError;
   for (const model of GEMINI_MODELS) {
@@ -43,22 +49,11 @@ async function callWithFallback(prompt, pdfPart) {
         console.warn(`[Gemini] ${model} is overloaded (503), trying next fallback...`);
         lastError = err;
       } else {
-        throw err;
+        throw err; // Non-503 errors propagate immediately
       }
     }
   }
-  throw lastError;
-}
-
-// ── SSE helper ───────────────────────────────────────────────────────────────
-/**
- * Send one SSE event.
- * @param {import('express').Response} res
- * @param {string} event  - event name (matches frontend step keys)
- * @param {object} data   - any extra payload
- */
-function sendEvent(res, event, data = {}) {
-  res.write(`event: ${event}\ndata: ${JSON.stringify({ event, ...data })}\n\n`);
+  throw lastError; // All models exhausted
 }
 
 // ── Health Check ──────────────────────────────────────────────────────────────
@@ -66,45 +61,25 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'awake', timestamp: new Date() });
 });
 
-// ── Attendance Analysis Endpoint — SSE streaming ─────────────────────────────
-//
-//  The response is a text/event-stream.  Events emitted in order:
-//    file_received   — multer parsed the upload
-//    pdf_encoded     — base64 encoding done, about to call AI
-//    ai_request_sent — HTTP request to Gemini fired
-//    ai_responded    — Gemini returned a response
-//    parsing         — JSON parsing started
-//    done            — contains the final {success, insights} payload
-//    error           — contains {message} on any failure
-//
+// ── Attendance Analysis Endpoint (Web) ────────────────────────────────────────
 app.post('/api/analyze-attendance', (req, res, next) => {
   upload.single('report')(req, res, function (err) {
     if (err) {
-      console.error('Multer Error:', err);
+      console.error("Multer Error:", err);
       return res.status(400).json({ success: false, error: `File Upload Error: ${err.message}` });
     }
     next();
   });
 }, async (req, res) => {
-  // Set up SSE headers
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no'); // Disable Nginx buffering if present
-  res.flushHeaders();
-
   try {
     if (!req.file) {
-      sendEvent(res, 'error', { message: 'No PDF file provided under the "report" field.' });
-      return res.end();
+      return res.status(400).json({ success: false, error: 'No PDF file provided under the "report" field.' });
     }
     if (req.file.mimetype !== 'application/pdf') {
-      sendEvent(res, 'error', { message: 'Only PDF files are accepted.' });
-      return res.end();
+      return res.status(400).json({ success: false, error: 'Only PDF files are accepted.' });
     }
 
     console.log(`Received PDF: ${req.file.originalname} (${req.file.size} bytes)`);
-    sendEvent(res, 'file_received', { filename: req.file.originalname, bytes: req.file.size });
 
     const prompt = `
 You are a precise attendance data extractor. Accuracy is critical — a student's academic standing depends on this.
@@ -147,38 +122,27 @@ RULES:
 - Do NOT guess or approximate. Count every single row precisely.
 `;
 
-    // Encode PDF to base64
     const pdfPart = {
       inlineData: {
         mimeType: req.file.mimetype,
-        data: req.file.buffer.toString('base64'),
-      },
+        data: req.file.buffer.toString("base64")
+      }
     };
-    sendEvent(res, 'pdf_encoded');
 
-    // Fire AI request
-    sendEvent(res, 'ai_request_sent');
     const response = await callWithFallback(prompt, pdfPart);
-    sendEvent(res, 'ai_responded');
-
-    // Parse
-    sendEvent(res, 'parsing');
     const insights = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '{"subjects":[]}';
 
-    // Done — send final payload and close stream
-    sendEvent(res, 'done', { success: true, insights });
-    res.end();
-
+    res.json({ success: true, insights });
   } catch (err) {
-    console.error('Attendance Analysis Error:', err.response?.data || err.message);
-    sendEvent(res, 'error', { message: 'Failed to analyze attendance report. See backend logs.' });
-    res.end();
+    console.error("Attendance Analysis Error:", err.response?.data || err.message);
+    res.status(500).json({ success: false, error: 'Failed to analyze attendance report. See backend logs.' });
   }
 });
 
+
 // ── Global Error Handler ──────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
-  console.error('Critical Server Error:', err);
+  console.error("Critical Server Error:", err);
   res.status(500).json({ success: false, error: `Critical server error: ${err.message}` });
 });
 
